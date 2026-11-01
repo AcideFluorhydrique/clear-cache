@@ -19,6 +19,38 @@ const HOSTNAME_SUPPORTED_TYPES = new Set([
 
 const NOTIFICATION_ICON_URL = browser.runtime.getURL("icons/broom-32.png");
 
+// O Firefox só apaga cookies cujo host bate exato com um dos hostnames, e cookies de
+// ".exemplo.com" têm host "exemplo.com"; por isso os cookies também vão para os domínios
+// acima da aba (issue #38). Os outros tipos incluem subdomínios no Firefox, então ficam
+// só no hostname da aba (passar "com.br" apagaria dados de outros sites).
+function getCookieHostnames(hostname) {
+  // IPs não têm domínios acima
+  if (/^[\d.]+$/.test(hostname) || hostname.includes(":")) {
+    return [hostname];
+  }
+  const labels = hostname.split(".");
+  const hostnames = [hostname];
+  for (let i = 1; i < labels.length - 1; i++) {
+    hostnames.push(labels.slice(i).join("."));
+  }
+  return hostnames;
+}
+
+function removeSiteData(hostname, since, types) {
+  const { cookies, ...otherTypes } = types;
+  const removals = [];
+  if (cookies) {
+    removals.push(browser.browsingData.remove(
+      { hostnames: getCookieHostnames(hostname), since },
+      { cookies: true }
+    ));
+  }
+  if (Object.keys(otherTypes).length > 0) {
+    removals.push(browser.browsingData.remove({ hostnames: [hostname], since }, otherTypes));
+  }
+  return Promise.all(removals);
+}
+
 // Verifica e corrige configurações inválidas
 function checkStoredSettings(storedSettings) {
   let needsUpdate = false;
@@ -238,7 +270,7 @@ function showUnsupportedUrlError() {
       showNotification(
         storedSettings,
         browser.i18n.getMessage("unsupportedUrlMessage") ||
-          "Cannot clear cache for this page type. Try disabling 'Current tab only' option."
+          "Cannot clear cache for this page type. Try disabling 'Site data only' option."
       );
     }
     setBadgeWarning();
@@ -273,7 +305,7 @@ function showUnsupportedUrlError() {
         showNotification(
           storedSettings,
           browser.i18n.getMessage("incompatibleTypesMessage") ||
-            "The selected data types (cache, history, etc.) cannot be cleared for a single site. Disable 'Current tab only' or select cookies/localStorage."
+            "The selected data types (cache, history, etc.) cannot be cleared for a single site. Disable 'Site data only' or select cookies/localStorage."
         );
       }
       return;
@@ -309,13 +341,11 @@ function showUnsupportedUrlError() {
             // Usa apenas os tipos compatíveis com hostnames
             logDebug(storedSettings, "browsingData.remove hostnames", {
               hostnames: [hostname],
+              cookieHostnames: getCookieHostnames(hostname),
               since: sinceTimestamp,
               types: compatibleTypes
             });
-            browser.browsingData.remove({
-              hostnames: [hostname],
-              since: sinceTimestamp
-            }, compatibleTypes).then(
+            removeSiteData(hostname, sinceTimestamp, compatibleTypes).then(
               () => onCleared(browser.i18n.getMessage("currentTabLabel") || "(current tab)"),
               error => reportFailure(storedSettings, error)
             );
@@ -426,7 +456,7 @@ function clearCacheAndReload(storedSettings) {
       showNotification(
         storedSettings,
         browser.i18n.getMessage("unsupportedUrlMessage") ||
-          "Cannot clear cache for this page type. Try disabling 'Current tab only' option."
+          "Cannot clear cache for this page type. Try disabling 'Site data only' option."
       );
     }
     setBadgeWarning();
@@ -467,7 +497,7 @@ function clearCacheAndReload(storedSettings) {
         showNotification(
           storedSettings,
           browser.i18n.getMessage("incompatibleTypesMessage") ||
-            "The selected data types (cache, history, etc.) cannot be cleared for a single site. Disable 'Current tab only' or select cookies/localStorage."
+            "The selected data types (cache, history, etc.) cannot be cleared for a single site. Disable 'Site data only' or select cookies/localStorage."
         );
       }
       return;
@@ -503,13 +533,11 @@ function clearCacheAndReload(storedSettings) {
             // Usa apenas os tipos compatíveis com hostnames
             logDebug(storedSettings, "browsingData.remove hostnames", {
               hostnames: [hostname],
+              cookieHostnames: getCookieHostnames(hostname),
               since: sinceTimestamp,
               types: compatibleTypes
             });
-            browser.browsingData.remove({
-              hostnames: [hostname],
-              since: sinceTimestamp
-            }, compatibleTypes).then(
+            removeSiteData(hostname, sinceTimestamp, compatibleTypes).then(
               () => onCleared(browser.i18n.getMessage("currentTabLabel") || "(current tab)"),
               error => reportFailure(storedSettings, error)
             );
